@@ -141,6 +141,11 @@ export class Carrier {
         return url || "";
     }
 
+    private resolveUrl(requestUrl: string): string {
+        const isAbsolute = requestUrl.startsWith("http://") || requestUrl.startsWith("https://");
+        return isAbsolute ? requestUrl : (this.baseUrl || "") + requestUrl;
+    }
+
     async send(options: CarrierOptions): Promise<this> {
         const method = options.method || "GET";
         const headers: Record<string, string> = {
@@ -159,7 +164,7 @@ export class Carrier {
         if (method === "DELETE") this.trigger("delete", options.url, options.data);
         if (method === "PATCH") this.trigger("patch", options.url, options.data);
 
-        let fullUrl = this.baseUrl + options.url;
+        let fullUrl = this.resolveUrl(options.url);
         fullUrl = this.applyAuth(headers, options.auth, fullUrl);
 
         const response = await fetch(fullUrl, {
