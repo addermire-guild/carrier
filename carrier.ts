@@ -1,12 +1,13 @@
 // carrier.ts
 
 interface CarrierOptions {
-    method?: "GET" | "POST" | "PUT" | "DELETE";
+    method?: "GET" | "POST" | "PUT" | "DELETE" | "PATCH" | "HEAD" | "OPTIONS";
     url: string;
     data?: unknown;
     headers?: Record<string, string>;
     useToken?: boolean;
     credentials?: RequestCredentials;
+    auth?: CarrierAuthConfig;
 }
 
 interface CarrierProfiles {
@@ -28,6 +29,24 @@ interface CarrierContainer {
     raw: Response | null;
 }
 
+type CarrierHookEvent =
+    | "request"
+    | "response"
+    | "ok"
+    | "error"
+    | "get"
+    | "post"
+    | "put"
+    | "delete"
+    | "patch";
+
+type CarrierHook = (...args: unknown[]) => void;
+
+type CarrierAuthConfig =
+    | { type: "bearer"; token: string }
+    | { type: "basic"; username: string; password: string }
+    | { type: "apikey"; key: string; value: string; in: "header" | "query" };
+
 export class Carrier {
     public container: CarrierContainer = {
         data: null,
@@ -37,10 +56,10 @@ export class Carrier {
 
     private token: string | null = null;
     private baseUrl: string = "";
+    private globalAuth: CarrierAuthConfig | null = null;
+    private hooks: Partial<Record<CarrierHookEvent, CarrierHook[]>> = {};
 
-    constructor() {
-        // vacía por ahora, el usuario debe configurar
-    }
+    constructor() {}
 
     private inferEnv(): string {
         const hostname = globalThis.location?.hostname;
@@ -68,9 +87,58 @@ export class Carrier {
         }
     }
 
+    configureBaseUrl(url: string): void {
+        this.baseUrl = url;
+    }
+
+    configureToken(token: string): void {
+        this.setToken(token);
+    }
+
+    configureAuth(auth: CarrierAuthConfig): void {
+        this.globalAuth = auth;
+    }
+
     setToken(token: string): void {
         this.token = token;
         localStorage.setItem("token", token);
+    }
+
+    on(event: CarrierHookEvent, callback: CarrierHook): void {
+        if (!this.hooks[event]) {
+            this.hooks[event] = [];
+        }
+        this.hooks[event]?.push(callback);
+    }
+
+    private trigger(event: CarrierHookEvent, ...args: unknown[]): void {
+        this.hooks[event]?.forEach((cb) => cb(...args));
+    }
+
+    private applyAuth(headers: Record<string, string>, auth?: CarrierAuthConfig, url?: string): string {
+        const chosen = auth || this.globalAuth;
+        if (!chosen) return url || "";
+
+        switch (chosen.type) {
+            case "bearer":
+                headers["Authorization"] = `Bearer ${chosen.token}`;
+                break;
+            case "basic": {
+                const encoded = btoa(`${chosen.username}:${chosen.password}`);
+                headers["Authorization"] = `Basic ${encoded}`;
+                break;
+            }
+            case "apikey":
+                if (chosen.in === "header") {
+                    headers[chosen.key] = chosen.value;
+                } else if (chosen.in === "query" && url) {
+                    const separator = url.includes("?") ? "&" : "?";
+                    url += `${separator}${chosen.key}=${encodeURIComponent(chosen.value)}`;
+                }
+                break;
+        }
+
+        return url || "";
     }
 
     async send(options: CarrierOptions): Promise<this> {
@@ -84,11 +152,21 @@ export class Carrier {
             headers["Authorization"] = `Bearer ${this.token}`;
         }
 
-        const response = await fetch(this.baseUrl + options.url, {
+        this.trigger("request", options);
+        if (method === "GET") this.trigger("get", options.url);
+        if (method === "POST") this.trigger("post", options.url, options.data);
+        if (method === "PUT") this.trigger("put", options.url, options.data);
+        if (method === "DELETE") this.trigger("delete", options.url, options.data);
+        if (method === "PATCH") this.trigger("patch", options.url, options.data);
+
+        let fullUrl = this.baseUrl + options.url;
+        fullUrl = this.applyAuth(headers, options.auth, fullUrl);
+
+        const response = await fetch(fullUrl, {
             method,
             headers,
             credentials: options.credentials || "same-origin",
-            body: method !== "GET"
+            body: method !== "GET" && method !== "HEAD"
                 ? JSON.stringify(options.data || {})
                 : undefined,
         });
@@ -102,6 +180,13 @@ export class Carrier {
             this.container.data = null;
         }
 
+        this.trigger("response", response);
+        if (this.ok()) {
+            this.trigger("ok", response);
+        } else {
+            this.trigger("error", response);
+        }
+
         return this;
     }
 
@@ -111,6 +196,26 @@ export class Carrier {
 
     post(url: string, data?: unknown): Promise<this> {
         return this.send({ method: "POST", url, data });
+    }
+
+    put(url: string, data?: unknown): Promise<this> {
+        return this.send({ method: "PUT", url, data });
+    }
+
+    delete(url: string, data?: unknown): Promise<this> {
+        return this.send({ method: "DELETE", url, data });
+    }
+
+    patch(url: string, data?: unknown): Promise<this> {
+        return this.send({ method: "PATCH", url, data });
+    }
+
+    options(url: string): Promise<this> {
+        return this.send({ method: "OPTIONS", url });
+    }
+
+    head(url: string): Promise<this> {
+        return this.send({ method: "HEAD", url });
     }
 
     ok(): boolean {
