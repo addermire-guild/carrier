@@ -1,1 +1,1 @@
-export { carrier } from "./carrier.ts";
+export { carrier, Carrier } from "./carrier.ts";

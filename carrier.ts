@@ -1,17 +1,35 @@
+// carrier.ts
+
 interface CarrierOptions {
     method?: "GET" | "POST" | "PUT" | "DELETE";
     url: string;
-    data?: any;
+    data?: unknown;
     headers?: Record<string, string>;
     useToken?: boolean;
     credentials?: RequestCredentials;
 }
-class Carrier {
-    public container: {
-        data: any;
-        status: number;
-        raw: Response | null;
-    } = {
+
+interface CarrierProfiles {
+    dev?: string;
+    qa?: string;
+    prod?: string;
+    [key: string]: string | undefined;
+}
+
+interface CarrierProfileConfig {
+    env?: string;
+    profiles: CarrierProfiles;
+    token?: string;
+}
+
+interface CarrierContainer {
+    data: unknown;
+    status: number;
+    raw: Response | null;
+}
+
+export class Carrier {
+    public container: CarrierContainer = {
         data: null,
         status: 0,
         raw: null,
@@ -21,16 +39,28 @@ class Carrier {
     private baseUrl: string = "";
 
     constructor() {
-        if (globalThis.location?.hostname === "localhost") {
-            this.baseUrl = "http://localhost:8080";
-        } else {
-            this.baseUrl = "https://mailenasistente.com";
-        }
-
-        this.token = localStorage.getItem("token");
+        // vacía por ahora, el usuario debe configurar
     }
 
-    configure(config: { baseUrl?: string; token?: string }) {
+    private inferEnv(): string {
+        const hostname = globalThis.location?.hostname;
+        if (hostname === "localhost") return "dev";
+        if (hostname.includes("qacore")) return "qa";
+        return "prod";
+    }
+
+    configureProfiles(config: CarrierProfileConfig): void {
+        const env = config.env || this.inferEnv();
+        const url = config.profiles[env];
+        if (!url) throw new Error(`No baseUrl found for environment: ${env}`);
+        this.baseUrl = url;
+
+        if (config.token) {
+            this.setToken(config.token);
+        }
+    }
+
+    configure(config: { baseUrl?: string; token?: string }): void {
         if (config.baseUrl) this.baseUrl = config.baseUrl;
         if (config.token) {
             this.token = config.token;
@@ -38,15 +68,15 @@ class Carrier {
         }
     }
 
-    setToken(token: string) {
+    setToken(token: string): void {
         this.token = token;
         localStorage.setItem("token", token);
     }
 
-    async send(options: CarrierOptions) {
+    async send(options: CarrierOptions): Promise<this> {
         const method = options.method || "GET";
         const headers: Record<string, string> = {
-            "Content-Type": "application/json",
+            ...(method !== "GET" ? { "Content-Type": "application/json" } : {}),
             ...options.headers,
         };
 
@@ -75,11 +105,11 @@ class Carrier {
         return this;
     }
 
-    get(url: string) {
+    get(url: string): Promise<this> {
         return this.send({ method: "GET", url });
     }
 
-    post(url: string, data?: any) {
+    post(url: string, data?: unknown): Promise<this> {
         return this.send({ method: "POST", url, data });
     }
 
@@ -92,4 +122,4 @@ class Carrier {
     }
 }
 
-export const carrier = new Carrier();
+export const carrier: Carrier = new Carrier();
