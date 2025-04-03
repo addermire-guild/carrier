@@ -148,14 +148,16 @@ export class Carrier {
 
     async send(options: CarrierOptions): Promise<this> {
         const method = options.method || "GET";
+        const userHeaders = options.headers ?? {};
         const headers: Record<string, string> = {
             ...(method !== "GET" ? { "Content-Type": "application/json" } : {}),
-            ...options.headers,
+            ...userHeaders,
         };
 
-        if (options.useToken !== false && this.token) {
+        if (options.useToken !== false && this.token && !headers["Authorization"]) {
             headers["Authorization"] = `Bearer ${this.token}`;
         }
+        
 
         this.trigger("request", options);
         if (method === "GET") this.trigger("get", options.url);
