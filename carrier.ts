@@ -9,6 +9,12 @@ interface CarrierOptions {
     credentials?: RequestCredentials;
     auth?: CarrierAuthConfig;
 }
+interface CarrierResponse<T = unknown> {
+    ok: boolean;
+    status: number;
+    data: T | null;
+    raw: Response | null;
+}
 
 interface CarrierProfiles {
     dev?: string;
@@ -115,7 +121,11 @@ export class Carrier {
         this.hooks[event]?.forEach((cb) => cb(...args));
     }
 
-    private applyAuth(headers: Record<string, string>, auth?: CarrierAuthConfig, url?: string): string {
+    private applyAuth(
+        headers: Record<string, string>,
+        auth?: CarrierAuthConfig,
+        url?: string,
+    ): string {
         const chosen = auth || this.globalAuth;
         if (!chosen) return url || "";
 
@@ -133,7 +143,9 @@ export class Carrier {
                     headers[chosen.key] = chosen.value;
                 } else if (chosen.in === "query" && url) {
                     const separator = url.includes("?") ? "&" : "?";
-                    url += `${separator}${chosen.key}=${encodeURIComponent(chosen.value)}`;
+                    url += `${separator}${chosen.key}=${
+                        encodeURIComponent(chosen.value)
+                    }`;
                 }
                 break;
         }
@@ -142,11 +154,14 @@ export class Carrier {
     }
 
     private resolveUrl(requestUrl: string): string {
-        const isAbsolute = requestUrl.startsWith("http://") || requestUrl.startsWith("https://");
+        const isAbsolute = requestUrl.startsWith("http://") ||
+            requestUrl.startsWith("https://");
         return isAbsolute ? requestUrl : (this.baseUrl || "") + requestUrl;
     }
 
-    async send(options: CarrierOptions): Promise<this> {
+    async send<T = unknown>(
+        options: CarrierOptions,
+    ): Promise<CarrierResponse<T>> {
         const method = options.method || "GET";
         const userHeaders = options.headers ?? {};
         const headers: Record<string, string> = {
@@ -154,17 +169,23 @@ export class Carrier {
             ...userHeaders,
         };
 
-        if (options.useToken !== false && this.token && !headers["Authorization"]) {
+        if (
+            options.useToken !== false && this.token &&
+            !headers["Authorization"]
+        ) {
             headers["Authorization"] = `Bearer ${this.token}`;
         }
-        
 
         this.trigger("request", options);
         if (method === "GET") this.trigger("get", options.url);
         if (method === "POST") this.trigger("post", options.url, options.data);
         if (method === "PUT") this.trigger("put", options.url, options.data);
-        if (method === "DELETE") this.trigger("delete", options.url, options.data);
-        if (method === "PATCH") this.trigger("patch", options.url, options.data);
+        if (method === "DELETE") {
+            this.trigger("delete", options.url, options.data);
+        }
+        if (method === "PATCH") {
+            this.trigger("patch", options.url, options.data);
+        }
 
         let fullUrl = this.resolveUrl(options.url);
         fullUrl = this.applyAuth(headers, options.auth, fullUrl);
@@ -178,50 +199,50 @@ export class Carrier {
                 : undefined,
         });
 
-        this.container.status = response.status;
-        this.container.raw = response;
+        const status = response.status;
+        const raw = response;
 
+        let data: T | null;
         try {
-            this.container.data = await response.json();
+            data = await response.json();
         } catch (_) {
-            this.container.data = null;
+            data = null;
         }
+
+        const ok = status >= 200 && status < 300;
 
         this.trigger("response", response);
-        if (this.ok()) {
-            this.trigger("ok", response);
-        } else {
-            this.trigger("error", response);
-        }
+        if (ok) this.trigger("ok", response);
+        else this.trigger("error", response);
 
-        return this;
+        return { ok, status, data, raw };
     }
 
-    get(url: string): Promise<this> {
+    get(url: string): Promise<CarrierResponse> {
         return this.send({ method: "GET", url });
     }
 
-    post(url: string, data?: unknown): Promise<this> {
+    post(url: string, data?: unknown): Promise<CarrierResponse> {
         return this.send({ method: "POST", url, data });
     }
 
-    put(url: string, data?: unknown): Promise<this> {
+    put(url: string, data?: unknown): Promise<CarrierResponse> {
         return this.send({ method: "PUT", url, data });
     }
 
-    delete(url: string, data?: unknown): Promise<this> {
+    delete(url: string, data?: unknown): Promise<CarrierResponse> {
         return this.send({ method: "DELETE", url, data });
     }
 
-    patch(url: string, data?: unknown): Promise<this> {
+    patch(url: string, data?: unknown): Promise<CarrierResponse> {
         return this.send({ method: "PATCH", url, data });
     }
 
-    options(url: string): Promise<this> {
+    options(url: string): Promise<CarrierResponse> {
         return this.send({ method: "OPTIONS", url });
     }
 
-    head(url: string): Promise<this> {
+    head(url: string): Promise<CarrierResponse> {
         return this.send({ method: "HEAD", url });
     }
 
